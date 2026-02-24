@@ -1,37 +1,42 @@
 # ocular
 
-Small helper for Cisco AnyConnect-style SSO (SAMLv2 / Azure AD) when using
-`openconnect`.
-
-Flow:
-
-1. Perform the AnyConnect XML auth handshake
-2. Open a real Chrome/Chromium window for you to complete SSO/MFA
-3. Extract the SSO cookie and run `openconnect --cookie-on-stdin`
+Friendly CLI-based SSO bridge for `openconnect` (Cisco AnyConnect-style login).
 
 ## Requirements
 
 - `openconnect`
 - Chrome/Chromium (or `--chrome-path`)
-- `sudo`/`doas` (or run as root)
+
+## Install
+
+Running
+
+```sh
+cargo install --path .
+```
+
+installs the binary to `~/.cargo/bin/ocular` which is on your `PATH` by default.
 
 ## Usage
 
-Interactive:
-
 ```sh
+# Interactive
 ocular
-```
 
-Non-interactive:
-
-```sh
+# Connect (non-interactive)
 ocular --server vpn.example.com/group -- --base-mtu=1370
+
+# Authenticate only
+ocular --server vpn.example.com/group --authenticate shell
 ocular --server vpn.example.com/group --authenticate json
 ```
 
-The session cookie is cached in `~/.ocular/config.toml` to avoid reauth.
+## Important behavior
+
+- Session auth is cached in `~/.ocular/config.toml` and reused until server rejection/expiry.
+- Browser profile data is persisted in `~/.ocular/browser-profiles/` so IdP/browser cookies survive relaunch.
+- Extra args after `--` are passed directly to `openconnect`.
 
 ## License
 
-GPL-3.0-only (see `LICENSE`).
+AGPL-3.0-only (`LICENSE`).
