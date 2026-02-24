@@ -1,0 +1,30 @@
+[package]
+name = "ocular-vpn"
+version = "0.1.0"
+edition = "2024"
+description = "SSO helper for OpenConnect (AnyConnect)"
+license = "GPL-3.0-only"
+readme = "README.md"
+keywords = ["vpn", "openconnect", "anyconnect", "sso"]
+default-run = "ocular"
+autobins = false
+
+[[bin]]
+name = "ocular"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.32", features = ["derive"] }
+dialoguer = "0.11.0"
+headless_chrome = "1.0.18"
+indicatif = "0.17.11"
+libc = "0.2.171"
+quick-xml = { version = "0.38.3", features = ["escape-html"] }
+reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "cookies", "rustls-tls", "socks"] }
+serde = { version = "1.0.218", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror = "2.0.12"
+toml = "0.8.20"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+which = "7.0.2"
