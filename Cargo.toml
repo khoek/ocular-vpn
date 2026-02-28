@@ -15,17 +15,17 @@ name = "ocular"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5.32", features = ["derive"] }
-dialoguer = "0.11.0"
-headless_chrome = "1.0.18"
-indicatif = "0.17.11"
-libc = "0.2.171"
-quick-xml = { version = "0.38.3", features = ["escape-html"] }
-reqwest = { version = "0.12.15", default-features = false, features = ["blocking", "cookies", "rustls-tls", "socks"] }
-serde = { version = "1.0.218", features = ["derive"] }
-serde_json = "1.0.140"
-thiserror = "2.0.12"
-toml = "0.8.20"
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-which = "7.0.2"
+clap = { version = "4", features = ["derive"] }
+dialoguer = "0.12"
+headless_chrome = "1"
+indicatif = "0.18"
+libc = "0.2"
+quick-xml = { version = "0.39", features = ["escape-html"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "cookies", "rustls", "socks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+which = "8"
