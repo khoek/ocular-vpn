@@ -2,11 +2,11 @@
 name = "ocular-vpn"
 version = "0.1.0"
 edition = "2024"
-description = "SSO helper for OpenConnect (AnyConnect)"
+description = "CLI bridge for SSO authentication with OpenConnect/AnyConnect VPNs"
 license = "AGPL-3.0-only"
 readme = "README.md"
 repository = "https://github.com/khoek/ocular-vpn"
-keywords = ["vpn", "openconnect", "anyconnect", "sso"]
+keywords = ["vpn", "openconnect", "anyconnect", "sso", "cli"]
 default-run = "ocular"
 autobins = false
 
