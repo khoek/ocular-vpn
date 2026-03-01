@@ -1102,7 +1102,7 @@ checksum = "cf97ec579c3c42f953ef76dbf8d55ac91fb219dde70e49aa4a6b7d74e9919050"
 
 [[package]]
 name = "ocular-vpn"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "dialoguer",
