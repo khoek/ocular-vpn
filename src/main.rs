@@ -159,6 +159,7 @@ fn run(args: Args) -> Result<i32, AppError> {
             &args.ac_version,
             &openconnect_args,
             (!args.on_disconnect.trim().is_empty()).then_some(args.on_disconnect.as_str()),
+            interactive,
             args.log_level,
         )?;
 
@@ -284,6 +285,7 @@ fn run(args: Args) -> Result<i32, AppError> {
         &args.ac_version,
         &openconnect_args,
         (!args.on_disconnect.trim().is_empty()).then_some(args.on_disconnect.as_str()),
+        interactive,
         args.log_level,
     )?;
 
