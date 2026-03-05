@@ -1,0 +1,3 @@
+[submodule "vendor/openconnect-rs"]
+	path = vendor/openconnect-rs
+	url = git@github.com:khoek/Openconnect-RS.git

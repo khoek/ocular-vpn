@@ -32,5 +32,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 which = "8"
 
 [patch.crates-io]
-openconnect-core = { path = "vendor/openconnect-core" }
-openconnect-sys = { path = "vendor/openconnect-sys" }
+openconnect-core = { path = "vendor/openconnect-rs/crates/openconnect-core" }
+openconnect-sys = { path = "vendor/openconnect-rs/crates/openconnect-sys" }
