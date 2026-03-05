@@ -71,6 +71,9 @@ pub struct Args {
         help = "Arguments passed to openconnect (after --)"
     )]
     pub openconnect_args: Vec<String>,
+
+    #[arg(long, hide = true)]
+    pub internal_openconnect_payload: Option<PathBuf>,
 }
 
 fn parse_timeout_seconds(s: &str) -> Result<Duration, String> {

@@ -1,17 +1,27 @@
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use openconnect_core::config::{ConfigBuilder, EntrypointBuilder, LogLevel as CoreLogLevel};
 use openconnect_core::events::EventHandlers;
 use openconnect_core::protocols::get_anyconnect_protocol;
 use openconnect_core::result::OpenconnectError;
 use openconnect_core::{Connectable, Status, VpnClient};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+#[cfg(not(target_os = "windows"))]
+use which::which;
 
 use crate::anyconnect::AuthComplete;
 use crate::cli::LogLevel;
 use crate::error::AppError;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OpenConnectResult {
     pub exit_code: i32,
     pub auth_failed: bool,
@@ -19,7 +29,112 @@ pub struct OpenConnectResult {
     pub expires_at_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PrivilegedConnectPayload {
+    host_url: String,
+    session_token: String,
+    server_cert_hash: String,
+    proxy: Option<String>,
+    version: String,
+    args: Vec<String>,
+    result_path: PathBuf,
+}
+
 pub fn run_openconnect(
+    host_url: &str,
+    auth: &AuthComplete,
+    proxy: Option<&str>,
+    version: &str,
+    args: &[String],
+    on_disconnect: Option<&str>,
+    log_level: LogLevel,
+) -> Result<OpenConnectResult, AppError> {
+    #[cfg(unix)]
+    {
+        if unsafe { libc::geteuid() } != 0 {
+            return run_openconnect_via_elevated_child(
+                host_url,
+                auth,
+                proxy,
+                version,
+                args,
+                on_disconnect,
+                log_level,
+            );
+        }
+    }
+
+    run_openconnect_local(
+        host_url,
+        auth,
+        proxy,
+        version,
+        args,
+        on_disconnect,
+        log_level,
+    )
+}
+
+pub fn run_privileged_payload(payload_path: &Path, log_level: LogLevel) -> Result<i32, AppError> {
+    let payload = read_json_file::<PrivilegedConnectPayload>(payload_path)?.ok_or_else(|| {
+        AppError::Config("privileged connection payload file was empty".to_string())
+    })?;
+    cleanup_temp_file(payload_path);
+
+    let auth = AuthComplete {
+        auth_id: "cached".to_string(),
+        auth_message: String::new(),
+        session_token: payload.session_token,
+        server_cert_hash: payload.server_cert_hash,
+    };
+
+    let result = run_openconnect_local(
+        &payload.host_url,
+        &auth,
+        payload.proxy.as_deref(),
+        &payload.version,
+        &payload.args,
+        None,
+        log_level,
+    )?;
+
+    write_json_file(&payload.result_path, &result)?;
+    Ok(result.exit_code)
+}
+
+pub fn preauthorize_privileged_runner() -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        if unsafe { libc::geteuid() } == 0 {
+            return Ok(());
+        }
+
+        let (program, prefix_args) = privileged_command_prefix()?;
+        let status = match program.as_str() {
+            "sudo" => {
+                let mut cmd = Command::new("sudo");
+                cmd.args(&prefix_args);
+                cmd.arg("-v");
+                cmd.status()?
+            }
+            "doas" => {
+                let mut cmd = Command::new("doas");
+                cmd.args(&prefix_args);
+                cmd.arg("true");
+                cmd.status()?
+            }
+            _ => return Ok(()),
+        };
+
+        if !status.success() {
+            return Err(AppError::NeedRoot);
+        }
+    }
+
+    Ok(())
+}
+
+fn run_openconnect_local(
     host_url: &str,
     auth: &AuthComplete,
     proxy: Option<&str>,
@@ -42,6 +157,8 @@ pub fn run_openconnect(
     if let Some(proxy) = proxy {
         builder.http_proxy(proxy);
     }
+    configure_vpnc_script(&mut builder);
+
     let config = builder
         .build()
         .map_err(|e| AppError::OpenConnectCore(e.to_string()))?;
@@ -121,6 +238,17 @@ pub fn run_openconnect(
         result.auth_failed = is_probably_auth_failure(&err);
     }
 
+    if let Ok(state) = lifecycle.lock()
+        && result.exit_code == 0
+    {
+        if let Some(err) = state.last_error.as_ref() {
+            result.exit_code = 1;
+            result.auth_failed |= is_probably_auth_failure(err);
+        } else if !state.connected_once {
+            result.exit_code = 1;
+        }
+    }
+
     if let Some(cmd) = on_disconnect.filter(|s| !s.trim().is_empty()) {
         handle_disconnect(cmd);
     }
@@ -128,8 +256,173 @@ pub fn run_openconnect(
     Ok(result)
 }
 
-pub fn preauthorize_privileged_runner() -> Result<(), AppError> {
+#[cfg(unix)]
+fn run_openconnect_via_elevated_child(
+    host_url: &str,
+    auth: &AuthComplete,
+    proxy: Option<&str>,
+    version: &str,
+    args: &[String],
+    on_disconnect: Option<&str>,
+    log_level: LogLevel,
+) -> Result<OpenConnectResult, AppError> {
+    let (program, prefix_args) = privileged_command_prefix()?;
+    let payload_path = create_secure_temp_file("payload")?;
+    let result_path = create_secure_temp_file("result")?;
+
+    let payload = PrivilegedConnectPayload {
+        host_url: host_url.to_string(),
+        session_token: auth.session_token.clone(),
+        server_cert_hash: auth.server_cert_hash.clone(),
+        proxy: proxy.map(|s| s.to_string()),
+        version: version.to_string(),
+        args: args.to_vec(),
+        result_path: result_path.clone(),
+    };
+    write_json_file(&payload_path, &payload)?;
+
+    let exe = std::env::current_exe()?;
+    tracing::info!(runner = %program, "Delegating VPN connect to privileged helper");
+
+    let mut cmd = Command::new(&program);
+    cmd.args(&prefix_args);
+    cmd.arg(exe);
+    cmd.arg("--internal-openconnect-payload");
+    cmd.arg(&payload_path);
+    cmd.arg("--log-level");
+    cmd.arg(log_level_as_cli_arg(log_level));
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        cmd.env("RUST_LOG", rust_log);
+    }
+
+    let status = cmd.status()?;
+
+    let mut result = match read_json_file::<OpenConnectResult>(&result_path)? {
+        Some(result) => result,
+        None => OpenConnectResult {
+            exit_code: exit_code(status),
+            ..OpenConnectResult::default()
+        },
+    };
+
+    if result.exit_code == 0 && !status.success() {
+        result.exit_code = exit_code(status);
+    }
+
+    cleanup_temp_file(&payload_path);
+    cleanup_temp_file(&result_path);
+
+    if let Some(cmd) = on_disconnect.filter(|s| !s.trim().is_empty()) {
+        handle_disconnect(cmd);
+    }
+
+    Ok(result)
+}
+
+#[cfg(unix)]
+fn privileged_command_prefix() -> Result<(String, Vec<String>), AppError> {
+    if which("doas").is_ok() {
+        return Ok(("doas".to_string(), Vec::new()));
+    }
+    if which("sudo").is_ok() {
+        return Ok(("sudo".to_string(), vec!["-E".to_string()]));
+    }
+    Err(AppError::NeedRoot)
+}
+
+fn log_level_as_cli_arg(level: LogLevel) -> &'static str {
+    match level {
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Info => "info",
+        LogLevel::Debug => "debug",
+        LogLevel::Trace => "trace",
+    }
+}
+
+fn exit_code(status: std::process::ExitStatus) -> i32 {
+    match status.code() {
+        Some(code) => code,
+        None => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::ExitStatusExt;
+                status.signal().map(|s| 128 + s).unwrap_or(1)
+            }
+            #[cfg(not(unix))]
+            {
+                1
+            }
+        }
+    }
+}
+
+fn create_secure_temp_file(prefix: &str) -> Result<PathBuf, AppError> {
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    for attempt in 0..256_u32 {
+        let path = dir.join(format!("ocular-{prefix}-{pid}-{now}-{attempt}.json"));
+        let mut opts = OpenOptions::new();
+        opts.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            opts.mode(0o600);
+        }
+
+        match opts.open(&path) {
+            Ok(_) => return Ok(path),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(AppError::Io(err)),
+        }
+    }
+
+    Err(AppError::Io(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "failed to create temporary payload file",
+    )))
+}
+
+fn write_json_file<T: Serialize>(path: &Path, value: &T) -> Result<(), AppError> {
+    let raw = serde_json::to_vec(value)?;
+
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        opts.mode(0o600);
+    }
+
+    let mut file = opts.open(path)?;
+    file.write_all(&raw)?;
+    file.flush()?;
     Ok(())
+}
+
+fn read_json_file<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read(path)?;
+    if raw.is_empty() {
+        return Ok(None);
+    }
+
+    let value = serde_json::from_slice(&raw)?;
+    Ok(Some(value))
+}
+
+fn cleanup_temp_file(path: &Path) {
+    if let Err(err) = fs::remove_file(path)
+        && err.kind() != io::ErrorKind::NotFound
+    {
+        tracing::debug!(file = %path.display(), %err, "Failed to remove temporary file");
+    }
 }
 
 fn to_core_log_level(level: LogLevel) -> CoreLogLevel {
@@ -138,6 +431,48 @@ fn to_core_log_level(level: LogLevel) -> CoreLogLevel {
         LogLevel::Debug => CoreLogLevel::Debug,
         LogLevel::Trace => CoreLogLevel::Trace,
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn configure_vpnc_script(builder: &mut ConfigBuilder) {
+    if let Some(vpnc_script) = discover_vpnc_script() {
+        tracing::debug!(script = %vpnc_script, "Using vpnc-script");
+        builder.vpncscript(&vpnc_script);
+    } else {
+        tracing::warn!(
+            "vpnc-script was not found in PATH/common locations; set OCULAR_VPNC_SCRIPT to avoid './vpnc-script' failures"
+        );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn configure_vpnc_script(_builder: &mut ConfigBuilder) {}
+
+#[cfg(not(target_os = "windows"))]
+fn discover_vpnc_script() -> Option<String> {
+    if let Ok(path) = std::env::var("OCULAR_VPNC_SCRIPT") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() && Path::new(trimmed).is_file() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    if let Ok(path) = which("vpnc-script") {
+        return Some(path.to_string_lossy().to_string());
+    }
+
+    let candidates = [
+        "/etc/vpnc/vpnc-script",
+        "/usr/share/vpnc-scripts/vpnc-script",
+        "/usr/local/etc/vpnc/vpnc-script",
+        "/opt/homebrew/etc/vpnc/vpnc-script",
+    ];
+
+    candidates.iter().find_map(|candidate| {
+        Path::new(candidate)
+            .is_file()
+            .then(|| (*candidate).to_string())
+    })
 }
 
 fn handle_disconnect(command: &str) {
@@ -156,6 +491,7 @@ fn handle_disconnect(command: &str) {
 struct Lifecycle {
     connected_once: bool,
     connecting_announced: bool,
+    last_error: Option<OpenconnectError>,
 }
 
 fn handle_status_event(state: &Arc<Mutex<Lifecycle>>, status: Status) {
@@ -177,6 +513,7 @@ fn handle_status_event(state: &Arc<Mutex<Lifecycle>>, status: Status) {
                 state.connected_once = true;
             }
             state.connecting_announced = false;
+            state.last_error = None;
         }
         Status::Disconnecting => {
             tracing::info!("OpenConnect disconnecting...");
@@ -186,6 +523,7 @@ fn handle_status_event(state: &Arc<Mutex<Lifecycle>>, status: Status) {
             state.connecting_announced = false;
         }
         Status::Error(err) => {
+            state.last_error = Some(err.clone());
             tracing::warn!(error = %err, "OpenConnect error");
         }
     }

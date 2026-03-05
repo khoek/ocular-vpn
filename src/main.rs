@@ -50,6 +50,12 @@ fn init_tracing(level: LogLevel) {
 
 fn run(args: Args) -> Result<i32, AppError> {
     let mut args = args;
+
+    if let Some(payload_path) = args.internal_openconnect_payload.clone() {
+        init_tracing(args.log_level);
+        return openconnect::run_privileged_payload(&payload_path, args.log_level);
+    }
+
     let mut config_store = ConfigStore::load()?;
     let interactive = args.interactive || args.server.is_none();
     if interactive {

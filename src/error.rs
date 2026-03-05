@@ -43,6 +43,11 @@ pub enum AppError {
     #[error("timed out waiting for browser login to complete")]
     BrowserTimeout,
 
+    #[error(
+        "this operation requires root privileges (run with sudo/doas, or ensure elevation succeeds)"
+    )]
+    NeedRoot,
+
     #[error("openconnect core error: {0}")]
     OpenConnectCore(String),
 
