@@ -43,11 +43,8 @@ pub enum AppError {
     #[error("timed out waiting for browser login to complete")]
     BrowserTimeout,
 
-    #[error("openconnect executable not found")]
-    OpenConnectNotFound,
-
-    #[error("need root privileges (run as root or install sudo/doas)")]
-    NeedRoot,
+    #[error("openconnect core error: {0}")]
+    OpenConnectCore(String),
 
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),

@@ -3,8 +3,8 @@
 Minimal CLI SSO helper for `openconnect` (Cisco AnyConnect-style login).
 
 ## Requirements
-- `openconnect`
 - Chrome/Chromium (or `--chrome-path`)
+- Native build prerequisites for `openconnect-core` / `openconnect-sys` (see crate docs)
 
 ## Install
 ```sh

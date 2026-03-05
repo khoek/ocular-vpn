@@ -60,10 +60,17 @@ pub struct Config {
 
     #[serde(default)]
     pub remotes: Vec<Remote>,
+
+    #[serde(default)]
+    pub last_connect: Option<LastConnect>,
 }
 
 fn default_version() -> u32 {
     1
+}
+
+fn default_browser_timeout_secs() -> u64 {
+    600
 }
 
 impl Default for Config {
@@ -71,6 +78,7 @@ impl Default for Config {
         Self {
             version: default_version(),
             remotes: Vec::new(),
+            last_connect: None,
         }
     }
 }
@@ -170,6 +178,43 @@ impl CachedAuth {
             .map(|expires| now_epoch >= expires)
             .unwrap_or(false)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LastConnect {
+    pub remote_url: String,
+
+    #[serde(default)]
+    pub proxy: Option<String>,
+
+    #[serde(default)]
+    pub usergroup: String,
+
+    #[serde(default)]
+    pub authgroup: String,
+
+    #[serde(default = "default_browser_timeout_secs")]
+    pub browser_timeout_secs: u64,
+
+    #[serde(default)]
+    pub on_disconnect: String,
+
+    #[serde(default)]
+    pub log_level: StoredLogLevel,
+
+    #[serde(default)]
+    pub openconnect_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum StoredLogLevel {
+    Error,
+    Info,
+    #[default]
+    Warn,
+    Debug,
+    Trace,
 }
 
 pub fn now_epoch() -> i64 {

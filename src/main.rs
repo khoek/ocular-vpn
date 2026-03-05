@@ -11,7 +11,7 @@ use clap::Parser;
 use tracing::level_filters::LevelFilter;
 
 use crate::cli::{Args, AuthenticateOutputFormat, LogLevel};
-use crate::config::{CachedAuth, ConfigStore};
+use crate::config::{CachedAuth, ConfigStore, LastConnect, StoredLogLevel};
 use crate::error::AppError;
 
 fn main() {
@@ -71,7 +71,8 @@ fn run(args: Args) -> Result<i32, AppError> {
 
     let ui_status = ui::status::UiStatus::new(interactive);
 
-    let mut host = anyconnect::HostProfile::new(server, args.usergroup, args.authgroup)?;
+    let mut host =
+        anyconnect::HostProfile::new(server, args.usergroup.clone(), args.authgroup.clone())?;
     let mut host_url = host.vpn_url();
     let mut config_key = anyconnect::canonicalize_remote_key(&host_url);
 
@@ -138,6 +139,13 @@ fn run(args: Args) -> Result<i32, AppError> {
             session_token: cached.session_token,
             server_cert_hash: cached.server_cert_hash,
         };
+        persist_last_connect(
+            &mut config_store,
+            &host_url,
+            &host,
+            &args,
+            &openconnect_args,
+        );
         let res = openconnect::run_openconnect(
             &host_url,
             &auth,
@@ -145,6 +153,7 @@ fn run(args: Args) -> Result<i32, AppError> {
             &args.ac_version,
             &openconnect_args,
             (!args.on_disconnect.trim().is_empty()).then_some(args.on_disconnect.as_str()),
+            args.log_level,
         )?;
 
         if res.auth_failed {
@@ -198,7 +207,7 @@ fn run(args: Args) -> Result<i32, AppError> {
     );
 
     let browser_cfg = browser::BrowserConfig {
-        chrome_path: args.chrome_path,
+        chrome_path: args.chrome_path.clone(),
         proxy: args.proxy.clone(),
         timeout: args.browser_timeout,
         cookie_host: anyconnect::host_from_url(&host_url),
@@ -255,6 +264,13 @@ fn run(args: Args) -> Result<i32, AppError> {
         return Ok(0);
     }
 
+    persist_last_connect(
+        &mut config_store,
+        &host_url,
+        &host,
+        &args,
+        &openconnect_args,
+    );
     let res = openconnect::run_openconnect(
         &host_url,
         &auth_complete,
@@ -262,6 +278,7 @@ fn run(args: Args) -> Result<i32, AppError> {
         &args.ac_version,
         &openconnect_args,
         (!args.on_disconnect.trim().is_empty()).then_some(args.on_disconnect.as_str()),
+        args.log_level,
     )?;
 
     if let Some(remote) = config_store.cfg_mut().remote_mut(&config_key) {
@@ -278,4 +295,36 @@ fn run(args: Args) -> Result<i32, AppError> {
     }
 
     Ok(res.exit_code)
+}
+
+fn persist_last_connect(
+    config_store: &mut ConfigStore,
+    host_url: &str,
+    host: &anyconnect::HostProfile,
+    args: &Args,
+    openconnect_args: &[String],
+) {
+    config_store.cfg_mut().last_connect = Some(LastConnect {
+        remote_url: anyconnect::canonicalize_remote_key(host_url),
+        proxy: args.proxy.clone(),
+        usergroup: host.user_group.clone(),
+        authgroup: host.auth_group.clone(),
+        browser_timeout_secs: args.browser_timeout.as_secs().max(1),
+        on_disconnect: args.on_disconnect.clone(),
+        log_level: to_stored_log_level(args.log_level),
+        openconnect_args: openconnect_args.to_vec(),
+    });
+    if let Err(err) = config_store.save() {
+        tracing::warn!(%err, "Failed to persist quick-connect settings");
+    }
+}
+
+fn to_stored_log_level(level: LogLevel) -> StoredLogLevel {
+    match level {
+        LogLevel::Error => StoredLogLevel::Error,
+        LogLevel::Warn => StoredLogLevel::Warn,
+        LogLevel::Info => StoredLogLevel::Info,
+        LogLevel::Debug => StoredLogLevel::Debug,
+        LogLevel::Trace => StoredLogLevel::Trace,
+    }
 }

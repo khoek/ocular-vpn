@@ -1,5 +1,6 @@
 pub mod interactive {
     use std::io::IsTerminal;
+    use std::time::Duration;
 
     use dialoguer::{Confirm, Input, Select, theme::ColorfulTheme};
 
@@ -15,6 +16,33 @@ pub mod interactive {
         let theme = ColorfulTheme::default();
 
         eprintln!("ocular\n");
+
+        if args.server.is_none()
+            && args.authenticate.is_none()
+            && let Some(last) = cfg.last_connect.as_ref()
+            && !last.remote_url.trim().is_empty()
+        {
+            let quick = Confirm::with_theme(&theme)
+                .with_prompt(format!(
+                    "Quick connect to {}?",
+                    quick_connect_target(&last.remote_url)
+                ))
+                .default(true)
+                .interact()?;
+            if quick {
+                args.server = Some(last.remote_url.clone());
+                args.proxy = last.proxy.clone();
+                args.usergroup = last.usergroup.clone();
+                args.authgroup = last.authgroup.clone();
+                args.browser_timeout = Duration::from_secs(last.browser_timeout_secs.max(1));
+                args.on_disconnect = last.on_disconnect.clone();
+                args.log_level = stored_to_cli_log_level(last.log_level);
+                if args.openconnect_args.is_empty() {
+                    args.openconnect_args = last.openconnect_args.clone();
+                }
+                return Ok(());
+            }
+        }
 
         let now = config::now_epoch();
         let mut labels: Vec<String> = Vec::new();
@@ -185,6 +213,25 @@ pub mod interactive {
         }
 
         Ok(())
+    }
+
+    fn quick_connect_target(url: &str) -> String {
+        let trimmed = url.trim().trim_end_matches('/');
+        let no_scheme = trimmed
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or(trimmed);
+        no_scheme.to_string()
+    }
+
+    fn stored_to_cli_log_level(level: config::StoredLogLevel) -> LogLevel {
+        match level {
+            config::StoredLogLevel::Error => LogLevel::Error,
+            config::StoredLogLevel::Warn => LogLevel::Warn,
+            config::StoredLogLevel::Info => LogLevel::Info,
+            config::StoredLogLevel::Debug => LogLevel::Debug,
+            config::StoredLogLevel::Trace => LogLevel::Trace,
+        }
     }
 }
 

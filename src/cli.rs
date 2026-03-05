@@ -49,7 +49,7 @@ pub struct Args {
     )]
     pub ac_version: String,
 
-    #[arg(long, value_enum, default_value_t = LogLevel::Warn)]
+    #[arg(long, value_enum, default_value_t = LogLevel::Info)]
     pub log_level: LogLevel,
 
     #[arg(long, help = "Path to a Chrome/Chromium executable")]
