@@ -1,0 +1,2 @@
+[env]
+OPENCONNECT_USE_PREBUILT = "true"
